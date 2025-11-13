@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Campus Map</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no"/>
+
+  <!-- CDN (works if Mapbox CDN blocked) -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/mapbox-gl/2.10.0/mapbox-gl.css" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mapbox-gl/2.10.0/mapbox-gl.js"></script>
+
+  <style>
+    body { margin:0; padding:0; }
+    #map { position:absolute; top:0; bottom:0; width:100%; }
+    .mapboxgl-popup { max-width: 240px; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script>
+    // ---------- CONFIG ----------
+    mapboxgl.accessToken = "pk.eyJ1Ijoic2o1OCIsImEiOiJjbWh2d2FsbWIwMGo2MmxzZnVnYzlldWoyIn0.jiMomMx2UQ6YtpiGVoEM1w";
+    const styleUrl = "mapbox://styles/mapbox/satellite-streets-v12";
+    const geojsonUrl = "campus.geojson"; // external file (same folder)
+
+    let highlightedId = null; // currently highlighted feature id
+
+    // ---------- MAP ----------
+    const map = new mapboxgl.Map({
+      container: "map",
+      style: styleUrl,
+      center: [77.439, 12.861],
+      zoom: 15
+    });
+
+    map.addControl(new mapboxgl.NavigationControl());
+
+    map.on("load", () => {
+      fetch(geojsonUrl)
+        .then(r => {
+          if (!r.ok) throw new Error("Failed to load GeoJSON: " + r.status);
+          return r.json();
+        })
+        .then(raw => {
+          const data = stripZ(raw);
+
+          // add source
+          map.addSource("campus", { type: "geojson", data });
+
+          // base fill: use feature's "color" property if present, otherwise fallback
+          map.addLayer({
+            id: "campus-fills",
+            type: "fill",
+            source: "campus",
+            paint: {
+              // expression: use property 'color' if available, else fallback to '#1f78b4'
+              "fill-color": [
+                "coalesce",
+                ["get", "color"],
+                "#1f78b4"
+              ],
+              "fill-opacity": 0.45
+            }
+          });
+
+          // outlines for all features
+          map.addLayer({
+            id: "campus-outline",
+            type: "line",
+            source: "campus",
+            paint: {
+              "line-color": "#222",
+              "line-width": 1.6
+            }
+          });
+
+          // highlight fill (shows selected polygon fill with distinct style)
+          map.addLayer({
+            id: "campus-highlight-fill",
+            type: "fill",
+            source: "campus",
+            paint: {
+              "fill-color": "#00e5ff",
+              "fill-opacity": 0.65
+            },
+            filter: ["==", "id", -1] // no selection initially
+          });
+
+          // highlight outline (stronger border for selected)
+          map.addLayer({
+            id: "campus-highlight-line",
+            type: "line",
+            source: "campus",
+            paint: {
+              "line-color": "#ff0000",
+              "line-width": 3
+            },
+            filter: ["==", "id", -1]
+          });
+
+          fitToBounds(data);
+
+          
+          const popup = new mapboxgl.Popup({ closeButton: true, closeOnClick: true });
+
+          map.on("click", "campus-fills", (e) => {
+            if (!e.features || !e.features.length) return;
+            const feat = e.features[0];
+            const fid = feat.properties.id;
+            const name = feat.properties.name || feat.properties.NAME || "Unknown";
+
+            highlightedId = fid;
+
+    
+            map.setFilter("campus-highlight-fill", ["==", "id", highlightedId]);
+            map.setFilter("campus-highlight-line", ["==", "id", highlightedId]);
+
+    
+            popup.setLngLat(e.lngLat)
+                 .setHTML(`<strong>${escapeHtml(name)}</strong>`)
+                 .addTo(map);
+          });
+
+          // change cursor when hovering over fills
+          map.on("mouseenter", "campus-fills", () => map.getCanvas().style.cursor = "pointer");
+          map.on("mouseleave", "campus-fills", () => map.getCanvas().style.cursor = "");
+        })
+        .catch(err => {
+          console.error(err);
+          alert("Error loading GeoJSON: " + err.message);
+        });
+    });
+
+    // ---------- HELPERS ----------
+    function stripZ(geo) {
+      function strip(c) {
+        if (!Array.isArray(c)) return c;
+        if (typeof c[0] === "number") return [c[0], c[1]];
+        return c.map(strip);
+      }
+      const clone = JSON.parse(JSON.stringify(geo));
+      if (clone.type === "FeatureCollection") {
+        clone.features.forEach(f => {
+          if (f.geometry && f.geometry.coordinates) f.geometry.coordinates = strip(f.geometry.coordinates);
+        });
+      } else if (clone.geometry && clone.geometry.coordinates) {
+        clone.geometry.coordinates = strip(clone.geometry.coordinates);
+      }
+      return clone;
+    }
+
+    function fitToBounds(fc) {
+      const bounds = new mapboxgl.LngLatBounds();
+      if (!fc || !fc.features) return;
+      fc.features.forEach(f => {
+        if (!f.geometry) return;
+        // find all numbers in the coords and extend bounds by lon/lat pairs
+        const nums = JSON.stringify(f.geometry.coordinates).match(/-?\d+\.\d+/g);
+        if (!nums) return;
+        for (let i = 0; i < nums.length; i += 2) {
+          bounds.extend([parseFloat(nums[i]), parseFloat(nums[i+1])]);
+        }
+      });
+      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 40, maxZoom: 18 });
+    }
+
+    function escapeHtml(str) {
+      return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+  </script>
+</body>
+</html>
