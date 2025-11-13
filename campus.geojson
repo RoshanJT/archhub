@@ -112,11 +112,6 @@
     },
     {
       "type": "Feature",
-      "properties": { "id": 7, "name": "Devdan Block (no coords found)" },
-      "geometry": null
-    },
-    {
-      "type": "Feature",
       "properties": { "id": 8, "name": "First block", "color": "red" },
       "geometry": {
         "type": "Polygon",
@@ -214,7 +209,7 @@
     },
     {
       "type": "Feature",
-      "properties": { "id": 10, "name": "Juice World", "color":"#e63946"  },
+      "properties": { "id": 10, "name": "Juice World", "color":"purple"  },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[
@@ -240,7 +235,7 @@
     },
     {
       "type": "Feature",
-      "properties": { "id": 11, "name": "Laundry", "color": "purple" },
+      "properties": { "id": 11, "name": "Laundry", "color": "pink" },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[
@@ -272,7 +267,7 @@
     },
     {
       "type": "Feature",
-      "properties": { "id": 13, "name": "MBA Canteen", "color": "#e63946"  },
+      "properties": { "id": 13, "name": "MBA Canteen", "color": "purple"  },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[
@@ -327,7 +322,7 @@
     },
     {
       "type": "Feature",
-      "properties": { "id": 14, "name": "North Canteen", "color": "#e63946"  },
+      "properties": { "id": 14, "name": "North Canteen", "color": "purple"  },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[

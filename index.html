@@ -2,21 +2,72 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Campus Map</title>
+  <title>Campus Map — Legend</title>
   <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no"/>
 
-  <!-- CDN (works if Mapbox CDN blocked) -->
+  <!-- Cloudflare CDN fallback for mapbox-gl -->
   <link href="https://cdnjs.cloudflare.com/ajax/libs/mapbox-gl/2.10.0/mapbox-gl.css" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mapbox-gl/2.10.0/mapbox-gl.js"></script>
 
   <style>
-    body { margin:0; padding:0; }
+    body { margin:0; padding:0; font-family: Arial, Helvetica, sans-serif; }
     #map { position:absolute; top:0; bottom:0; width:100%; }
-    .mapboxgl-popup { max-width: 240px; }
+
+    /* Legend box */
+    .legend {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      z-index: 20;
+      background: rgba(255,255,255,0.95);
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      font-size: 13px;
+      line-height: 1.4;
+      min-width: 170px;
+    }
+    .legend h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .legend-row {
+      display:flex;
+      align-items:center;
+      gap:8px;
+      margin:6px 0;
+    }
+    .swatch {
+      width:14px;
+      height:14px;
+      border-radius:3px;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.08) inset;
+      flex-shrink:0;
+    }
+    .legend-label { flex:1; }
+
+    /* small responsive tweak */
+    @media (max-width:480px) {
+      .legend { left:8px; right:8px; min-width: auto; font-size:12px; }
+    }
+
+    .mapboxgl-popup { max-width:260px; }
   </style>
 </head>
 <body>
   <div id="map"></div>
+
+  <div class="legend" id="legend">
+    <h4>Legend</h4>
+    <div class="legend-row"><div class="swatch" style="background:#d62728"></div><div class="legend-label">Blocks</div></div>
+    <div class="legend-row"><div class="swatch" style="background:#17becf"></div><div class="legend-label">Ponds</div></div>
+    <div class="legend-row"><div class="swatch" style="background:#9467bd"></div><div class="legend-label">Canteens</div></div>
+    <div class="legend-row"><div class="swatch" style="background:#ffbf00"></div><div class="legend-label">Sports facilities</div></div>
+    <div class="legend-row"><div class="swatch" style="background:#ff7f0e"></div><div class="legend-label">Chapel</div></div>
+    <div class="legend-row"><div class="swatch" style="background:#1f3b7a"></div><div class="legend-label">Open Auditorium</div></div>
+    <div class="legend-row"><div class="swatch" style="background:#e377c2"></div><div class="legend-label">Laundry</div></div>
+  </div>
 
   <script>
     // ---------- CONFIG ----------
@@ -24,9 +75,25 @@
     const styleUrl = "mapbox://styles/mapbox/satellite-streets-v12";
     const geojsonUrl = "campus.geojson"; // external file (same folder)
 
-    let highlightedId = null; // currently highlighted feature id
+    // Category → color map (matches legend order)
+    const CATEGORY_COLORS = {
+      "blocks": "#d62728",            // red
+      "pond": "#17becf",              // blue/cyan
+      "canteen": "#e377c2",           // pink
+      "sports": "#ffbf00",            // yellow
+      "chapel": "#ff7f0e",            // orange
+      "open auditorium": "#1f3b7a",   // dark blue
+      "auditorium": "#1f3b7a",        // alternate
+      "laundry": "#9467bd"            // purple
+    };
 
-    // ---------- MAP ----------
+    // highlighting color
+    const HIGHLIGHT_FILL = "#00e5ff";
+    const HIGHLIGHT_LINE = "#ff0000";
+
+    let highlightedId = null; // will hold properties.id of selected feature
+
+    // ---------- INIT MAP ----------
     const map = new mapboxgl.Map({
       container: "map",
       style: styleUrl,
@@ -38,33 +105,26 @@
 
     map.on("load", () => {
       fetch(geojsonUrl)
-        .then(r => {
-          if (!r.ok) throw new Error("Failed to load GeoJSON: " + r.status);
-          return r.json();
-        })
+        .then(r => { if(!r.ok) throw new Error("Failed to load GeoJSON: " + r.status); return r.json(); })
         .then(raw => {
-          const data = stripZ(raw);
+          // 1) strip Z coords and 2) infer category & fill color where missing
+          const data = preprocessGeoJSON(raw);
 
           // add source
           map.addSource("campus", { type: "geojson", data });
 
-          // base fill: use feature's "color" property if present, otherwise fallback
+          // base fill using properties.color
           map.addLayer({
             id: "campus-fills",
             type: "fill",
             source: "campus",
             paint: {
-              // expression: use property 'color' if available, else fallback to '#1f78b4'
-              "fill-color": [
-                "coalesce",
-                ["get", "color"],
-                "#1f78b4"
-              ],
+              "fill-color": ["coalesce", ["get", "color"], "#1f78b4"],
               "fill-opacity": 0.45
             }
           });
 
-          // outlines for all features
+          // outlines
           map.addLayer({
             id: "campus-outline",
             type: "line",
@@ -75,54 +135,44 @@
             }
           });
 
-          // highlight fill (shows selected polygon fill with distinct style)
+          // highlight fill & outline (filter will be set to match properties.id)
           map.addLayer({
             id: "campus-highlight-fill",
             type: "fill",
             source: "campus",
-            paint: {
-              "fill-color": "#00e5ff",
-              "fill-opacity": 0.65
-            },
-            filter: ["==", "id", -1] // no selection initially
+            paint: { "fill-color": HIGHLIGHT_FILL, "fill-opacity": 0.65 },
+            filter: ["==", ["get", "id"], -1]
           });
-
-          // highlight outline (stronger border for selected)
           map.addLayer({
             id: "campus-highlight-line",
             type: "line",
             source: "campus",
-            paint: {
-              "line-color": "#ff0000",
-              "line-width": 3
-            },
-            filter: ["==", "id", -1]
+            paint: { "line-color": HIGHLIGHT_LINE, "line-width": 3 },
+            filter: ["==", ["get", "id"], -1]
           });
 
+          // zoom to features
           fitToBounds(data);
 
-          
+          // popup + highlight on click
           const popup = new mapboxgl.Popup({ closeButton: true, closeOnClick: true });
 
           map.on("click", "campus-fills", (e) => {
             if (!e.features || !e.features.length) return;
             const feat = e.features[0];
-            const fid = feat.properties.id;
-            const name = feat.properties.name || feat.properties.NAME || "Unknown";
+            const propId = feat.properties && feat.properties.id;
+            const name = feat.properties && (feat.properties.name || feat.properties.NAME) || "Unknown";
 
-            highlightedId = fid;
+            highlightedId = (typeof propId === "string" && /^\d+$/.test(propId)) ? Number(propId) : propId;
 
-    
-            map.setFilter("campus-highlight-fill", ["==", "id", highlightedId]);
-            map.setFilter("campus-highlight-line", ["==", "id", highlightedId]);
+            // set highlight filters (match properties.id)
+            map.setFilter("campus-highlight-fill", ["==", ["get", "id"], highlightedId]);
+            map.setFilter("campus-highlight-line", ["==", ["get", "id"], highlightedId]);
 
-    
-            popup.setLngLat(e.lngLat)
-                 .setHTML(`<strong>${escapeHtml(name)}</strong>`)
-                 .addTo(map);
+            popup.setLngLat(e.lngLat).setHTML(`<strong>${escapeHtml(name)}</strong>`).addTo(map);
           });
 
-          // change cursor when hovering over fills
+          // cursor change
           map.on("mouseenter", "campus-fills", () => map.getCanvas().style.cursor = "pointer");
           map.on("mouseleave", "campus-fills", () => map.getCanvas().style.cursor = "");
         })
@@ -132,42 +182,71 @@
         });
     });
 
-    // ---------- HELPERS ----------
-    function stripZ(geo) {
-      function strip(c) {
-        if (!Array.isArray(c)) return c;
-        if (typeof c[0] === "number") return [c[0], c[1]];
-        return c.map(strip);
-      }
+    // ---------- UTIL: preprocess GeoJSON ----------
+    function preprocessGeoJSON(geo) {
+      // clone + strip Z coords
       const clone = JSON.parse(JSON.stringify(geo));
-      if (clone.type === "FeatureCollection") {
-        clone.features.forEach(f => {
-          if (f.geometry && f.geometry.coordinates) f.geometry.coordinates = strip(f.geometry.coordinates);
-        });
-      } else if (clone.geometry && clone.geometry.coordinates) {
-        clone.geometry.coordinates = strip(clone.geometry.coordinates);
-      }
+      if (!clone || !clone.features) return clone;
+
+      clone.features.forEach(f => {
+        // strip Z
+        if (f.geometry && f.geometry.coordinates) f.geometry.coordinates = stripZCoords(f.geometry.coordinates);
+
+        // ensure properties exists
+        f.properties = f.properties || {};
+
+        // infer category from name (case-insensitive)
+        const name = (f.properties.name || "").toString().toLowerCase();
+
+        let category = null;
+        if (/\bblock\b|\bblocks\b/.test(name)) category = "blocks";
+        else if (/\bpond\b|\bponds\b/.test(name)) category = "pond";
+        else if (/\bcanteen\b|\bcanteens\b/.test(name)) category = "canteen";
+        else if (/\bfootball\b|\btrack\b|\btennis\b|\bsport\b|\bsports\b|\bplayground\b|\bstadium\b/.test(name)) category = "sports";
+        else if (/\bchapel\b/.test(name)) category = "chapel";
+        else if (/\bopen auditorium\b|\bauditorium\b/.test(name)) category = "open auditorium";
+        else if (/\blaundry\b/.test(name)) category = "laundry";
+
+        f.properties.category = category || null;
+
+        // if color not provided, set from category mapping
+        if (!f.properties.color) {
+          if (category && CATEGORY_COLORS[category]) f.properties.color = CATEGORY_COLORS[category];
+          // otherwise leave undefined (layer uses fallback)
+        }
+
+        // If properties.id is missing but feature has an id, keep it; ensure properties.id exists
+        if (typeof f.properties.id === "undefined") {
+          // If feature has top-level id, use it; otherwise create one using index hash
+          if (typeof f.id !== "undefined") f.properties.id = f.id;
+          else f.properties.id = Math.floor(Math.random() * 1e9); // fallback unique id
+        }
+      });
+
       return clone;
     }
 
+    // helper to strip Z recursively
+    function stripZCoords(coords) {
+      if (!Array.isArray(coords)) return coords;
+      if (typeof coords[0] === "number") return [coords[0], coords[1]];
+      return coords.map(stripZCoords);
+    }
+
+    // Fit all features to viewport
     function fitToBounds(fc) {
       const bounds = new mapboxgl.LngLatBounds();
       if (!fc || !fc.features) return;
       fc.features.forEach(f => {
         if (!f.geometry) return;
-        // find all numbers in the coords and extend bounds by lon/lat pairs
         const nums = JSON.stringify(f.geometry.coordinates).match(/-?\d+\.\d+/g);
         if (!nums) return;
-        for (let i = 0; i < nums.length; i += 2) {
-          bounds.extend([parseFloat(nums[i]), parseFloat(nums[i+1])]);
-        }
+        for (let i = 0; i < nums.length; i += 2) bounds.extend([parseFloat(nums[i]), parseFloat(nums[i+1])]);
       });
       if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 40, maxZoom: 18 });
     }
 
-    function escapeHtml(str) {
-      return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    }
+    function escapeHtml(str) { return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
   </script>
 </body>
 </html>
